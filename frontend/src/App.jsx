@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ResumeTemplate from './templates/ResumeTemplate';
 import ModernTemplate from './templates/ModernTemplate';
 import MinimalistTemplate from './templates/MinimalistTemplate';
@@ -223,6 +223,74 @@ const App = () => {
   };
 
   const [resumeData, setResumeData] = useState(initialData);
+
+
+  useEffect(() => {
+    // Support 'data', 'json', or 'resumeUrl' query parameters
+    const params = new URLSearchParams(window.location.search);
+    const dataParam = params.get('data');
+    const jsonParam = params.get('json');
+    let found = false;
+    if (dataParam) {
+      try {
+        let decoded = decodeURIComponent(dataParam);
+        try { decoded = decodeURIComponent(decoded); } catch {}
+        const parsed = JSON.parse(decoded);
+        if (parsed && typeof parsed === 'object') {
+          setResumeData(parsed);
+          found = true;
+        }
+      } catch (e) {
+        alert('Invalid JSON in data query parameter. Please check your URL.');
+        console.error('Invalid JSON in data query parameter:', e);
+      }
+    }
+    if (!found && jsonParam) {
+      try {
+        let decoded = decodeURIComponent(jsonParam);
+        try { decoded = decodeURIComponent(decoded); } catch {}
+        const parsed = JSON.parse(decoded);
+        if (parsed && typeof parsed === 'object') {
+          setResumeData(parsed);
+          found = true;
+        }
+      } catch (e) {
+        alert('Invalid JSON in json query parameter. Please check your URL.');
+        console.error('Invalid JSON in json query parameter:', e);
+      }
+    }
+    if (!found) {
+      // Fallback to resumeUrl if present
+      const resumeUrl = params.get('resumeUrl');
+      if (resumeUrl) {
+        fetchAndProcessResume(resumeUrl);
+      }
+    }
+    // eslint-disable-next-line
+  }, []);
+
+  const fetchAndProcessResume = async (url) => {
+    try {
+      // Fetch the PDF file as a blob
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch resume PDF');
+      const blob = await response.blob();
+
+      // Send to backend for parsing (adjust endpoint as needed)
+      const formData = new FormData();
+      formData.append('file', blob, 'resume.pdf');
+
+      const result = await fetch('http://localhost:8000/api/parse-resume', {
+        method: 'POST',
+        body: formData
+      });
+      if (!result.ok) throw new Error('Failed to parse resume');
+      const data = await result.json();
+      setResumeData(data);
+    } catch (error) {
+      console.error('Error fetching or processing resume:', error);
+    }
+  };
   const [activePanel, setActivePanel] = useState('customize'); // 'customize' or 'content'
 
   const [settings, setSettings] = useState({
