@@ -233,9 +233,9 @@ const App = () => {
     let found = false;
     if (dataParam) {
       try {
-        let decoded = decodeURIComponent(dataParam);
-        try { decoded = decodeURIComponent(decoded); } catch {}
-        const parsed = JSON.parse(decoded);
+        // URLSearchParams.get() already decodes the parameter
+        // Just parse it directly - no need for additional decoding
+        const parsed = JSON.parse(dataParam);
         if (parsed && typeof parsed === 'object') {
           setResumeData(parsed);
           found = true;
@@ -247,9 +247,8 @@ const App = () => {
     }
     if (!found && jsonParam) {
       try {
-        let decoded = decodeURIComponent(jsonParam);
-        try { decoded = decodeURIComponent(decoded); } catch {}
-        const parsed = JSON.parse(decoded);
+        // URLSearchParams.get() already decodes the parameter
+        const parsed = JSON.parse(jsonParam);
         if (parsed && typeof parsed === 'object') {
           setResumeData(parsed);
           found = true;
