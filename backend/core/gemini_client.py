@@ -1,3 +1,4 @@
+import asyncio
 import os
 from google import genai
 from google.genai import types
@@ -14,7 +15,7 @@ class GeminiClient:
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
 
-    def summarize_context(self, resume_text: str, jd_text: str) -> str:
+    async def summarize_context(self, resume_text: str, jd_text: str) -> str:
         prompt = f"""
         You are an expert technical recruiter and interviewer. 
         Analyze the following Resume and Job Description (JD). 
@@ -34,17 +35,15 @@ class GeminiClient:
         JOB DESCRIPTION:
         {jd_text}
         """
-        response = self.client.models.generate_content(
+        
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
             model=self.model_name,
             contents=prompt
         )
         return response.text
 
-    def generate_question(self, history: List[dict], context_summary: str) -> QuestionEvaluation:
-        # History format check/conversion if needed. 
-        # The new SDK expects 'contents' which can be a list of strings or Content objects.
-        # We'll construct a prompt string for simplicity and control, or use chat structure.
-        
+    async def generate_question(self, history: List[dict], context_summary: str) -> QuestionEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
         for turn in history:
             role = turn['role']
@@ -67,7 +66,7 @@ class GeminiClient:
         
         YOUR GOAL:
         1.  Evaluate the candidate's last answer (if any).
-        2.  Decide whether to continue the interview or end it.
+        2.  Decide whether to continue or end it.
         3.  Generate the next question if continuing.
         
         RULES:
@@ -86,7 +85,8 @@ class GeminiClient:
         Evaluate the last user response (if any) and generate the next step.
         """
 
-        response = self.client.models.generate_content(
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
             model=self.model_name,
             contents=prompt,
             config={
@@ -94,15 +94,9 @@ class GeminiClient:
                 "response_schema": QuestionEvaluation,
             },
         )
-        # The new SDK parses it into the Pydantic object automatically if response_schema is passed with the class!
-        # Or returns text we can parse. Let's verify return type.
-        # If response_schema is a Pydantic model, response.parsed is often populated.
-        # However, to be safe and matching user snippet:
-        # User snippet: Recipe.model_validate_json(response.text)
-        
         return QuestionEvaluation.model_validate_json(response.text)
 
-    def generate_feedback(self, history: List[dict], context_summary: str) -> FinalEvaluation:
+    async def generate_feedback(self, history: List[dict], context_summary: str) -> FinalEvaluation:
         prompt_history = "INTERVIEW HISTORY:\n"
         for turn in history:
             role = turn['role']
@@ -121,7 +115,8 @@ class GeminiClient:
         Generate the final detailed evaluation report.
         """
         
-        response = self.client.models.generate_content(
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
             model=self.model_name,
             contents=prompt,
             config={
@@ -130,3 +125,61 @@ class GeminiClient:
             },
         )
         return FinalEvaluation.model_validate_json(response.text)
+
+    def connect_live(self, system_instruction: str):
+        # Configuration aligning with user snippet where possible, while maintaining our features
+        config = {
+            "response_modalities": ["AUDIO", "TEXT"],
+            "system_instruction": system_instruction,
+            # Keeping voice config for now as it's standard for Bidi
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {
+                        "voice_name": "Puck"
+                    }
+                }
+            }
+        }
+        return self.client.aio.live.connect(model=self.model_name, config=config)
+
+    async def generate_chat_stream(self, history: List[dict], context_summary: str):
+        """
+        Streams regular text response based on history and context.
+        Bypasses JSON structure for conversation flow to enable standard streaming.
+        """
+        # Construct prompt similar to live session but designed for text-only stream
+        prompt_history = "INTERVIEW HISTORY:\n"
+        for turn in history:
+            role = turn['role']
+            content = turn['content']
+            prompt_history += f"{role.upper()}: {content}\n"
+            
+        system_instruction = f"""
+        You are an expert technical interviewer.
+        
+        CONTEXT SUMMARY:
+        {context_summary}
+        
+        GOAL:
+        Ask questions to evaluate the candidate based on the Job Description.
+        One question at a time.
+        Be professional but conversational.
+        If the candidate answers well, go deeper.
+        If they struggle, hint or move on.
+        
+        Start by introducing yourself and asking the first question if history is empty.
+        """
+        
+        # We append the history to the contents or manage it via chat session.
+        # Ideally, we used ephemeral stateless calls before.
+        # Let's use generaate_content_stream with the history in the prompt 
+        # (or list of content objects if we wanted to be fancy, but text prompt is fine).
+        
+        full_prompt = f"{system_instruction}\n\n{prompt_history}\n\nCandidate just replied. Respond to the candidate."
+
+        async for chunk in await self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=full_prompt,
+        ):
+            if chunk.text:
+                yield chunk.text
